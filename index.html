@@ -591,6 +591,106 @@
 
   .error-msg.show { display: block; }
   input.err { border-color: var(--danger) !important; }
+
+  /* ── KELLY HELPER ── */
+  .kelly-trigger {
+    font-size: 0.72rem;
+    color: var(--muted);
+    cursor: pointer;
+    text-decoration: underline dotted;
+    transition: color 0.2s;
+    display: inline-block;
+    margin-top: 2px;
+  }
+  .kelly-trigger:hover { color: var(--green); }
+  .kelly-panel {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    margin-bottom: 1.2rem;
+  }
+  .kelly-panel.open { display: block; }
+  .kelly-panel-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 0.8rem;
+  }
+  .kelly-inputs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.8rem;
+    margin-bottom: 0.9rem;
+  }
+  .kelly-inputs label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .kelly-inputs input {
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.9rem;
+    padding: 0.5rem 0.75rem;
+    outline: none;
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  .kelly-inputs input::-webkit-outer-spin-button,
+  .kelly-inputs input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .kelly-inputs input:focus { border-color: var(--green); }
+  .kelly-result {
+    display: none;
+    background: var(--card);
+    border-radius: 8px;
+    padding: 0.75rem 0.9rem;
+    margin-bottom: 0.8rem;
+    font-size: 0.82rem;
+  }
+  .kelly-result.visible { display: block; }
+  .kelly-result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 0;
+  }
+  .kelly-result-row .kr-label { color: var(--muted); }
+  .kelly-result-row .kr-val { font-family: 'Space Mono', monospace; font-weight: 700; }
+  .kr-full { color: var(--orange); }
+  .kr-half { color: var(--green); }
+  .kr-neg  { color: var(--danger); }
+  .kelly-note {
+    font-size: 0.72rem;
+    color: var(--muted);
+    line-height: 1.5;
+    margin-bottom: 0.8rem;
+  }
+  .kelly-apply-btn {
+    width: 100%;
+    padding: 0.55rem;
+    background: transparent;
+    border: 1px solid var(--green);
+    border-radius: 7px;
+    color: var(--green);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .kelly-apply-btn:hover { background: rgba(29,184,122,0.1); }
+  .kelly-apply-btn:disabled { border-color: var(--border); color: var(--muted); cursor: not-allowed; background: transparent; }
+
 </style>
 </head>
 <body>
@@ -645,7 +745,35 @@
 
       <!-- Risk % -->
       <div class="field">
-        <label>Risk Per Trade</label>
+        <label>Risk Per Trade <span id="kellyTrigger" class="kelly-trigger" onclick="toggleKelly()">→ 不知道填多少？用凯利公式算</span></label>
+
+        <!-- Kelly Helper Panel -->
+        <div class="kelly-panel" id="kellyPanel">
+          <div class="kelly-panel-title">凯利公式 — 帮你算出应该填多少%</div>
+          <div class="kelly-inputs">
+            <div>
+              <label>胜率 Win Rate (%)</label>
+              <input type="number" id="kellyWin" placeholder="55" min="1" max="99" step="1" oninput="calcKelly()">
+            </div>
+            <div>
+              <label>平均盈亏比 R:R</label>
+              <input type="number" id="kellyRR" placeholder="1.5" min="0.1" step="0.1" oninput="calcKelly()">
+            </div>
+          </div>
+          <div class="kelly-result" id="kellyResult">
+            <div class="kelly-result-row">
+              <span class="kr-label">Full Kelly</span>
+              <span class="kr-val kr-full" id="krFull">—</span>
+            </div>
+            <div class="kelly-result-row">
+              <span class="kr-label">Half Kelly（推荐）</span>
+              <span class="kr-val kr-half" id="krHalf">—</span>
+            </div>
+          </div>
+          <div class="kelly-note" id="kellyNote"></div>
+          <button class="kelly-apply-btn" id="kellyApplyBtn" disabled onclick="applyKelly()">将 Half Kelly 填入风险比例 →</button>
+        </div>
+
         <div class="risk-row">
           <input type="range" id="riskSlider" min="0.1" max="10" step="0.1" value="1" oninput="syncRisk(this.value)">
           <div class="risk-display" id="riskDisplay">1.0%</div>
@@ -908,6 +1036,78 @@
 
   // Allow Enter key to calculate
   document.addEventListener('keydown', e => { if (e.key === 'Enter') calculate(); });
+
+  // ── KELLY HELPER ──
+  let kellyHalfValue = null;
+
+  function toggleKelly() {
+    const panel = document.getElementById('kellyPanel');
+    panel.classList.toggle('open');
+  }
+
+  function calcKelly() {
+    const winRaw = parseFloat(document.getElementById('kellyWin').value);
+    const rr     = parseFloat(document.getElementById('kellyRR').value);
+    const result = document.getElementById('kellyResult');
+    const note   = document.getElementById('kellyNote');
+    const applyBtn = document.getElementById('kellyApplyBtn');
+
+    if (isNaN(winRaw) || isNaN(rr) || winRaw <= 0 || winRaw >= 100 || rr <= 0) {
+      result.classList.remove('visible');
+      note.textContent = '';
+      applyBtn.disabled = true;
+      kellyHalfValue = null;
+      return;
+    }
+
+    const w = winRaw / 100;
+    const q = 1 - w;
+    const kelly = w - (q / rr);
+    const half  = kelly / 2;
+
+    const krFull = document.getElementById('krFull');
+    const krHalf = document.getElementById('krHalf');
+
+    if (kelly <= 0) {
+      krFull.textContent = '无正期望值';
+      krFull.className = 'kr-val kr-neg';
+      krHalf.textContent = '—';
+      note.textContent = '当前胜率和盈亏比的组合没有正期望值，建议先优化交易策略再考虑仓位管理。';
+      applyBtn.disabled = true;
+      kellyHalfValue = null;
+      result.classList.add('visible');
+      return;
+    }
+
+    const fullPct = (kelly * 100).toFixed(1);
+    const halfPct = (half  * 100).toFixed(1);
+    kellyHalfValue = Math.min(parseFloat(halfPct), 10);
+
+    krFull.textContent = fullPct + '%';
+    krFull.className = 'kr-val kr-full';
+    krHalf.textContent = halfPct + '%';
+    krHalf.className = 'kr-val kr-half';
+
+    if (kelly > 0.5) {
+      note.textContent = 'Full Kelly 建议仓位较高，说明策略理论优势强——但胜率估计常有误差，Half Kelly 是更稳健的选择。';
+    } else if (kelly > 0.1) {
+      note.textContent = 'Half Kelly 保留约75%最优增长率，同时将回撤风险降低约50%。大多数专业交易者的实际选择。';
+    } else {
+      note.textContent = '策略优势较小，Half Kelly 建议的风险比例很低——这是正确的。小优势靠积累，不靠重仓。';
+    }
+
+    applyBtn.disabled = false;
+    result.classList.add('visible');
+  }
+
+  function applyKelly() {
+    if (kellyHalfValue === null) return;
+    const capped = Math.min(kellyHalfValue, 10);
+    document.getElementById('riskSlider').value = capped;
+    syncRisk(capped);
+    document.getElementById('kellyPanel').classList.remove('open');
+  }
+
 </script>
 </body>
 </html>
